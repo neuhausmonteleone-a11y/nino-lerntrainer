@@ -22,6 +22,9 @@ button{border:0;border-radius:10px;padding:12px;font-size:15px;font-weight:700;c
 .option{display:block;width:100%;text-align:left;margin:7px 0;border:1px solid var(--line);background:white}
 .correct{background:#e4f5ea!important} .wrong{background:#fde7e5!important}
 .feedback{padding:10px;border-radius:10px;background:var(--soft);margin-top:10px}
+.warn{padding:10px;border-radius:10px;background:#fff3cd;margin-top:10px}
+.timer{font-weight:800;font-size:18px;text-align:center;padding:8px 10px;background:#eef3f8;border-radius:10px;margin:10px 0}
+.sessionDone{text-align:center;padding:22px}
 table{width:100%;border-collapse:collapse;font-size:14px} td,th{padding:8px;border-bottom:1px solid #e1e6eb;text-align:left;vertical-align:top}
 textarea{width:100%;min-height:90px;border:1px solid var(--line);border-radius:10px;padding:10px;font:inherit}
 .kpi{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0}
@@ -36,11 +39,11 @@ textarea{width:100%;min-height:90px;border:1px solid var(--line);border-radius:1
 <div class="box">
 <h1>Ninos Stilmittel-Lerntrainer</h1>
 <div><b>Ziel:</b> Bis Mittwochabend alle 12 Stilmittel sicher erkennen, erklären und anwenden.</div>
-<div class="small">Kurze Einheiten. Der Lernstand wird nur auf diesem Gerät gespeichert.</div>
+<div class="small">Kurze Einheiten. Schwierige Karten kommen später erneut – aber die Session endet trotzdem pünktlich.</div>
 <div class="grid" style="margin-top:12px">
 <button onclick="show('plan')">Lernplan</button>
-<button onclick="startCards('all')">Lernkarten</button>
-<button onclick="startCards('weak')">Schwächen üben</button>
+<button onclick="startCards('all',12)">12-Min.-Lernkarten</button>
+<button onclick="startCards('weak',8)">8 Min. Schwächen</button>
 <button onclick="startQuiz(6)">Mini-Quiz</button>
 <button onclick="startQuiz(15)">Großes Quiz</button>
 <button onclick="show('analyse')">Textanalyse</button>
@@ -52,21 +55,24 @@ textarea{width:100%;min-height:90px;border:1px solid var(--line);border-radius:1
 <section id="plan" class="box sec">
 <h2>Plan bis Mittwochabend</h2>
 <table><tr><th>Zeit</th><th>Dauer</th><th>Aufgabe</th></tr><tr><td><b>Sonntag – Einheit 1</b></td><td>10–12 Min.</td><td>Karten 1–6, dann 6-Fragen-Miniquiz.</td></tr><tr><td><b>Sonntag – Einheit 2</b></td><td>10–12 Min.</td><td>Karten 7–12, dann 6-Fragen-Miniquiz.</td></tr><tr><td><b>Sonntag – Einheit 3</b></td><td>10 Min.</td><td>Schwächen trainieren. Ziel: mindestens 9/12 Begriffe sicher.</td></tr><tr><td><b>Sonntagabend zusammen</b></td><td>20–25 Min.</td><td>Blitzabfrage, Verwechslungsfallen, kurzer Analysetext.</td></tr><tr><td><b>Montag</b></td><td>15–20 Min.</td><td>Priorisierte Karten + Quiz + 5 eigene Beispiele.</td></tr><tr><td><b>Dienstag</b></td><td>20–25 Min.</td><td>Textanalyse + Wirkungssätze + Probeprüfung.</td></tr><tr><td><b>Mittwoch</b></td><td>15–20 Min.</td><td>Gemischter Abschlusstest, nur Fehler gezielt wiederholen.</td></tr><tr><td><b>Mittwochabend</b></td><td>10 Min.</td><td>Merksätze + 3 Verwechslungsfallen. Nichts Neues.</td></tr></table>
-<div class="feedback"><b>Regel:</b> Spätestens nach 20–25 Minuten Schluss. Lieber später noch einmal kurz lernen als lange am Stück.</div>
+<div class="feedback"><b>Neue Regel:</b> Nicht an einer Karte festbeißen. „Noch üben“ → Lösung verstehen → weiter. Die Karte kommt nach einigen anderen Karten erneut.</div>
 </section>
 
 <section id="cards" class="box sec hidden">
 <h2 id="cardsTitle">Lernkarten</h2>
 <div class="small">Karte antippen, Antwort prüfen und ehrlich bewerten.</div>
+<div id="timer" class="timer">12:00</div>
+<div id="sessionHint" class="small">Bei „Noch üben“ kommt die Karte nach 3 anderen Karten wieder.</div>
 <div id="cp" style="font-weight:700;margin:8px 0"></div>
 <div id="flash" class="flash" onclick="flip()"></div>
-<div class="grid" style="margin-top:10px">
+<div class="grid" style="margin-top:10px" id="cardButtons">
 <button class="bad" onclick="rate(false)">Noch üben</button>
 <button class="good" onclick="rate(true)">Konnte ich</button>
 <button onclick="mix()">Mischen</button>
 <button onclick="show('progress');renderProgress()">Zwischenstand</button>
 </div>
 <div id="cs" class="small" style="margin-top:8px"></div>
+<div id="missInfo" class="warn hidden"></div>
 </section>
 
 <section id="quiz" class="box sec hidden">
@@ -137,9 +143,20 @@ const qbank=[{"q": "„Wind und Wellen wüten wild.“", "opts": ["Anapher", "Al
 const KEY='nino_stilmittel_v2';
 
 function loadState(){
-  try { const s=JSON.parse(localStorage.getItem(KEY)||'null'); if(s) return s; } catch(e){}
+  try {
+    const s=JSON.parse(localStorage.getItem(KEY)||'null');
+    if(s){
+      s.cards=s.cards||{};
+      for(const t of terms){
+        if(!s.cards[t.name]) s.cards[t.name]={known:0,missed:0,last:null,missStreak:0};
+        if(s.cards[t.name].missStreak===undefined) s.cards[t.name].missStreak=0;
+      }
+      s.quizRuns=s.quizRuns||[]; s.quizWeak=s.quizWeak||{}; s.analyses=s.analyses||0; s.studyMs=s.studyMs||0;
+      return s;
+    }
+  } catch(e){}
   return {
-    cards:Object.fromEntries(terms.map(t=>[t.name,{known:0,missed:0,last:null}])),
+    cards:Object.fromEntries(terms.map(t=>[t.name,{known:0,missed:0,last:null,missStreak:0}])),
     quizRuns:[], quizWeak:{}, analyses:0, studyMs:0, lastTick:Date.now()
   };
 }
@@ -158,55 +175,118 @@ document.addEventListener('visibilitychange',tick);
 window.addEventListener('beforeunload',tick);
 
 function show(id){
+  if(id!=='cards') stopCardTimer(false);
   document.querySelectorAll('.sec').forEach(x=>x.classList.add('hidden'));
   document.getElementById(id).classList.remove('hidden');
   window.scrollTo({top:0,behavior:'smooth'});
 }
 
-let ord=[],pos=0,rev=false,mode='all';
+let queue=[],pos=0,rev=false,mode='all',sessionEnd=0,timerHandle=null,sessionMisses={},sessionAttempts=0,sessionStart=0;
 function weaknessScore(name){
-  const s=state.cards[name]||{known:0,missed:0,last:null};
+  const s=state.cards[name]||{known:0,missed:0,last:null,missStreak:0};
   if(s.last===null) return 100;
-  return s.missed*4-s.known+(s.last==='missed'?5:0);
+  return s.missed*4-s.known+(s.last==='missed'?5:0)+(s.missStreak||0)*3;
 }
-function startCards(which){
-  mode=which; show('cards');
-  ord=[...Array(terms.length).keys()];
+function startCards(which,minutes){
+  mode=which;
+  show('cards');
+  stopCardTimer(false);
+  sessionStart=Date.now();
+  sessionEnd=sessionStart+minutes*60*1000;
+  sessionMisses={}; sessionAttempts=0;
+  queue=[...Array(terms.length).keys()];
+  queue.sort((a,b)=>weaknessScore(terms[b].name)-weaknessScore(terms[a].name));
   if(which==='weak'){
-    ord.sort((a,b)=>weaknessScore(terms[b].name)-weaknessScore(terms[a].name));
-    ord=ord.slice(0,6);
+    queue=queue.slice(0,6);
     document.getElementById('cardsTitle').textContent='Schwächen gezielt üben';
-  } else document.getElementById('cardsTitle').textContent='Lernkarten';
-  pos=0;rev=false;renderCard();
+  } else document.getElementById('cardsTitle').textContent='Lernkarten – Zeit-Session';
+  pos=0; rev=false;
+  document.getElementById('cardButtons').classList.remove('hidden');
+  document.getElementById('missInfo').classList.add('hidden');
+  document.getElementById('sessionHint').textContent='Bei „Noch üben“ kommt die Karte nach 3 anderen Karten wieder.';
+  renderCard(); updateTimer(); timerHandle=setInterval(updateTimer,1000);
+}
+function updateTimer(){
+  if(!sessionEnd) return;
+  const left=Math.max(0,sessionEnd-Date.now());
+  const m=Math.floor(left/60000), sec=Math.floor((left%60000)/1000);
+  document.getElementById('timer').textContent=`${m}:${String(sec).padStart(2,'0')}`;
+  if(left<=0) endCardSession();
+}
+function stopCardTimer(resetEnd=true){
+  if(timerHandle){clearInterval(timerHandle);timerHandle=null;}
+  if(resetEnd) sessionEnd=0;
+}
+function endCardSession(){
+  stopCardTimer(); tick();
+  const missedNames=Object.keys(sessionMisses).filter(k=>sessionMisses[k]>0);
+  const safeNow=terms.filter(t=>(state.cards[t.name]||{}).last==='known').length;
+  document.getElementById('cp').textContent='Session beendet';
+  document.getElementById('flash').innerHTML=`<div class="sessionDone"><div class="term">Stopp – genug für jetzt.</div><br><div>${sessionAttempts} Kartenversuche · ${safeNow}/12 aktuell sicher</div><br><div class="small">${missedNames.length?'Für später gemerkt: '+missedNames.join(', '):'Keine auffälligen Schwächen in dieser Runde.'}</div></div>`;
+  document.getElementById('cardButtons').classList.add('hidden');
+  document.getElementById('cs').textContent='Die schwierigen Karten werden in der nächsten Session wieder priorisiert.';
+  document.getElementById('timer').textContent='Fertig';
+  document.getElementById('sessionHint').textContent='Jetzt Pause machen. Nicht weiterpauken.';
 }
 function renderCard(){
-  const t=terms[ord[pos]];
-  document.getElementById('cp').textContent=`Karte ${pos+1} von ${ord.length}`;
-  const st=state.cards[t.name]||{known:0,missed:0,last:null};
+  if(Date.now()>=sessionEnd){endCardSession();return;}
+  if(pos>=queue.length){
+    queue=[...Array(terms.length).keys()].sort((a,b)=>weaknessScore(terms[b].name)-weaknessScore(terms[a].name));
+    if(mode==='weak') queue=queue.slice(0,6);
+    pos=0;
+  }
+  const t=terms[queue[pos]];
+  const st=state.cards[t.name]||{known:0,missed:0,last:null,missStreak:0};
+  document.getElementById('cp').textContent=`Karte ${pos+1} · ${t.name}`;
   document.getElementById('cs').textContent=`Bisher: ${st.known}× gewusst | ${st.missed}× noch üben`;
   document.getElementById('flash').innerHTML=rev
     ? `<div class="answer"><b>${t.memory}</b><br><br>${t.definition}<br><br><b>Beispiel:</b> ${t.example}<br><br><span class="small">Wirkung: ${t.effect}</span></div>`
     : `<div><div class="term">${t.name}</div><div class="small">Antippen: Was bedeutet das?</div></div>`;
 }
-function flip(){rev=!rev;renderCard();}
+function flip(){if(Date.now()>=sessionEnd)return;rev=!rev;renderCard();}
 function rate(ok){
-  const t=terms[ord[pos]];
-  if(ok) state.cards[t.name].known++; else state.cards[t.name].missed++;
-  state.cards[t.name].last=ok?'known':'missed';
-  saveState(); pos++;
-  if(pos>=ord.length){
-    pos=0;
-    if(mode==='weak') ord.sort((a,b)=>weaknessScore(terms[b].name)-weaknessScore(terms[a].name));
+  if(Date.now()>=sessionEnd){endCardSession();return;}
+  const currentIndex=queue[pos], t=terms[currentIndex], st=state.cards[t.name];
+  sessionAttempts++;
+  if(ok){
+    st.known++; st.last='known'; st.missStreak=0;
+    document.getElementById('missInfo').classList.add('hidden');
+  } else {
+    st.missed++; st.last='missed'; st.missStreak=(st.missStreak||0)+1;
+    sessionMisses[t.name]=(sessionMisses[t.name]||0)+1;
+    const insertAt=Math.min(pos+4,queue.length);
+    queue.splice(insertAt,0,currentIndex);
+    const box=document.getElementById('missInfo');
+    box.textContent=`Merksatz: „${t.memory}“. Einmal laut sagen – dann weiter. Die Karte kommt später nochmal.`;
+    box.classList.remove('hidden');
   }
-  rev=false;renderCard();
+  saveState(); pos++; rev=false; renderCard();
 }
-function mix(){ord.sort(()=>Math.random()-.5);pos=0;rev=false;renderCard();}
+function mix(){
+  const rest=queue.slice(pos).sort(()=>Math.random()-.5);
+  queue=queue.slice(0,pos).concat(rest); renderCard();
+}
 
 let set=[],qp=0,score=0,ans=false,currentWrong=[];
+function weightedQuizSet(n){
+  const weighted=[];
+  for(const q of qbank){
+    const w=Math.max(1,1+(state.quizWeak[q.topic]||0));
+    for(let i=0;i<w;i++) weighted.push(q);
+  }
+  const chosen=[],seen=new Set();
+  while(chosen.length<Math.min(n,qbank.length) && weighted.length){
+    const idx=Math.floor(Math.random()*weighted.length),q=weighted.splice(idx,1)[0];
+    if(!seen.has(q.q)){seen.add(q.q);chosen.push(q);}
+  }
+  for(const q of qbank) if(!seen.has(q.q)&&chosen.length<n) chosen.push(q);
+  return chosen;
+}
 function startQuiz(n){
-  show('quiz');set=[...qbank].sort(()=>Math.random()-.5).slice(0,Math.min(n,qbank.length));
+  show('quiz');set=weightedQuizSet(n);
   qp=0;score=0;currentWrong=[];renderQ();
 }
+
 function renderQ(){
   const q=set[qp];
   document.getElementById('qc').textContent=`Frage ${qp+1} von ${set.length}`;
@@ -231,7 +311,7 @@ function nextQ(){
     document.getElementById('qc').textContent='Fertig';
     document.getElementById('qq').innerHTML=`<b>${score} von ${set.length} richtig</b>`;
     const pct=score/set.length;
-    document.getElementById('qo').innerHTML=`<div class="feedback">${pct>=.85?'Sehr gut. Jetzt Anwendung oder Textanalyse üben.':pct>=.65?'Gute Basis. Die Fehler kurz mit „Schwächen üben“ nacharbeiten.':'Jetzt 10 Minuten „Schwächen üben“, dann ein neues Mini-Quiz.'}</div>`;
+    document.getElementById('qo').innerHTML=`<div class="feedback">${pct>=.85?'Sehr gut. Jetzt Anwendung oder Textanalyse üben.':pct>=.65?'Gute Basis. Die Fehler kurz mit „Schwächen üben“ nacharbeiten.':'Jetzt 8 Minuten „Schwächen üben“, dann ein neues Mini-Quiz.'}</div>`;
     document.getElementById('qf').innerHTML='';document.getElementById('next').classList.add('hidden');
   } else renderQ();
 }
@@ -269,8 +349,8 @@ function renderProgress(){
   document.getElementById('quizKpi').textContent=last?`${last.score}/${last.total}`:'–';
   document.getElementById('weakList').innerHTML=weak.length?weak.map(x=>`<span class="tag">${x.name}</span>`).join(''):'<span class="small">Aktuell keine auffälligen Schwächen.</span>';
   let rec='';
-  if(safe<6) rec='Nächster Schritt: 8–10 Minuten Lernkarten, danach ein Mini-Quiz.';
-  else if(weak.length>=3) rec='Nächster Schritt: „Schwächen üben“ und danach ein 6-Fragen-Mini-Quiz.';
+  if(safe<6) rec='Nächster Schritt: eine 12-Minuten-Lernkarten-Session.';
+  else if(weak.length>=3) rec='Nächster Schritt: 8 Minuten „Schwächen üben“, danach Mini-Quiz.';
   else if(!last||last.score/last.total<.8) rec='Nächster Schritt: Mini-Quiz. Falsche Themen danach gezielt wiederholen.';
   else rec='Die Grundlagen sitzen. Jetzt Textanalyse und Wirkungssätze unter Prüfungsbedingungen üben.';
   document.getElementById('recommend').innerHTML='<b>Empfehlung:</b> '+rec;
